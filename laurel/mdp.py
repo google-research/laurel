@@ -4,7 +4,7 @@ from collections.abc import Mapping, Sequence
 
 import numpy as np
 
-from google3.util.operations_research.cloud.lattle.experiments import graph_utils
+from . import graph_utils
 
 
 class MiddleMileMDP:

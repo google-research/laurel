@@ -1,0 +1,27 @@
+[tool.poetry]
+name = "laurel"
+version = "0.1.0"
+description = "Logistics Assignments Using Reinforcement Learning"
+authors = ["Onno Eberhard <onnoeberhard@gmail.com>"]
+license = "Apache 2.0"
+readme = "README.md"
+
+[tool.poetry.dependencies]
+python = ">=3.11,<3.13"
+numpy = "^1.25.2"
+jax = "^0.4.14"
+jraph = "^0.0.6.dev0"
+matplotlib = "^3.7.2"
+networkx = "^3.1"
+scipy = "^1.11.2"
+flax = "^0.7.2"
+jupyter = "^1.0.0"
+tqdm = "^4.66.1"
+optax = "^0.1.7"
+jax-dataloader = "^0.0.5"
+oetils = "^0.1.1"
+
+
+[build-system]
+requires = ["poetry-core"]
+build-backend = "poetry.core.masonry.api"

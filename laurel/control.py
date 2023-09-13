@@ -8,12 +8,14 @@ from typing import Any
 import flax.linen as nn
 import jax
 import jax.numpy as jnp
+import jax_dataloader as jdl
 import jraph
 import numpy as np
+import optax
 from scipy import special
 
-from google3.util.operations_research.cloud.lattle.experiments import graph_utils
-from google3.util.operations_research.cloud.lattle.experiments import mdp
+from . import graph_utils
+from . import mdp
 
 
 class SupervisedController:
@@ -22,24 +24,68 @@ class SupervisedController:
   def __init__(
       self,
       rng: np.random.Generator,
+      key: jax.random.PRNGKeyArray,
       env: mdp.MiddleMileMDP,
+      policy_type: str,
       num_rollouts: int,
-      num_training_steps: int,
+      num_epochs: int,
       num_feature_graph_steps: int,
-      linear_features: bool,
+      batch_size: int = 32,
+      step_prune: bool = False,
       feature_graph_kwargs: Mapping[str, Any] | None = None,
   ):
     self._rng = rng
+    self._key = key
     self._env = env
+    self._policy_type = policy_type
     self._num_rollouts = num_rollouts
-    self._num_training_steps = num_training_steps
+    self._num_epochs = num_epochs
     self._num_feature_graph_steps = num_feature_graph_steps
-    self._linear_features = linear_features
-    self._feature_graph_kwargs = feature_graph_kwargs or {}
+    self._batch_size = batch_size
+    self._step_prune = step_prune
+    self._feature_graph_kwargs = feature_graph_kwargs or {
+      'min_phantom_weight': None, 'prune_parcel': False
+    }
 
-    if self._linear_features:
-      self.policy = nn.Dense(1)
-      # TODO(onno): Continue here :)
+    self._params = None
+    if self._policy_type == 'linear':
+      self._policy = nn.Dense(1)
+
+  def get_features(self, state):
+    # Get feature graph.
+    state, feature_graph, parcel, trucks = self._env.get_feature_graph(
+        self._num_feature_graph_steps, state, **self._feature_graph_kwargs
+    )
+
+    if parcel is None:
+      # No parcel left in network.
+      return state, None, None, None, None, None
+
+    truck_ids = list(trucks.keys())
+    if len(trucks) == 1:
+      # Only one truck: no need for features.
+      return state, None, feature_graph, parcel, trucks, truck_ids
+
+    # Remove unneeded parts from feature graph.
+    nodes = feature_graph.nodes[:, 2:]  # Remove node location and time.
+    edges = feature_graph.edges[:, 1:]  # Remove edge ids.
+    fg_reduced = graph_utils.Graph(
+        nodes, edges, feature_graph.receivers, feature_graph.senders
+    )
+
+    # Build feature representations.
+    if self._policy_type == 'linear':
+      # Turn feature graph into list of vector features.
+      edge_features = fg_reduced.edges[truck_ids]
+      node_features = fg_reduced.nodes[
+        fg_reduced.receivers[truck_ids]
+      ]
+      features = np.hstack([edge_features, node_features])
+    else:
+      features = fg_reduced.to_jraph()
+
+    return state, features, feature_graph, parcel, trucks, truck_ids
+
 
   def collect_data(
       self,
@@ -52,10 +98,9 @@ class SupervisedController:
     for _ in range(self._num_rollouts):
       state, solution = self._env.reset(self._rng)
       while True:
-        # Get feature graph.
-        state, feature_graph, parcel, trucks = self._env.get_feature_graph(
-            self._num_feature_graph_steps, state, **self._feature_graph_kwargs
-        )
+        (
+          state, features, feature_graph, parcel, trucks, truck_ids
+        ) = self.get_features(state)
         if parcel is None:
           # No parcel left in network.
           break
@@ -63,6 +108,13 @@ class SupervisedController:
         parcel_id = int(
             feature_graph.edges[parcel_fg, graph_utils.EdgeFeatures.ID]
         )
+
+        if len(trucks) == 1:
+          # Only one available truck, no need to add to dataset.
+          state, *_ = self._env.step(
+            parcel_state, trucks[truck_ids[0]], state, prune=self._step_prune
+          )
+          continue
 
         # Find the correct truck according to the solution.
         label = None
@@ -85,34 +137,91 @@ class SupervisedController:
             continue
           break
 
-        # Remove unneeded parts from feature graph, add to dataset.
-        nodes = feature_graph.nodes[:, 2:]  # Remove node location and time.
-        edges = feature_graph.edges[:, 1:]  # Remove edge ids.
-        feature_graph = graph_utils.Graph(
-            nodes, edges, feature_graph.receivers, feature_graph.senders
-        )
-        if self._linear_features:
-          # Turn feature graph into list of vector features.
-          edge_features = feature_graph.edges[trucks]
-          node_features = feature_graph.nodes[feature_graph.receivers[trucks]]
-          features = dict(
-              zip(trucks, jnp.hstack([edge_features, node_features]))
-          )
-          dataset.append((features, label))
+        # Add features and label to dataset.
+        if self._policy_type == 'linear':
+          dataset.append((features, np.where(truck_ids == label)[0][0]))
         else:
-          dataset.append(
-              (feature_graph.to_jraph(), list(trucks.keys()), parcel_fg, label)
-          )
+          dataset.append((features, truck_ids, parcel_fg, label))
 
         # Use truck and get next state.
         truck = trucks[label]
-        state, *_ = self._env.step(parcel_state, truck, state)
+        state, *_ = self._env.step(
+          parcel_state, truck, state, prune=self._step_prune
+        )
 
     return dataset
 
+  @functools.partial(jax.jit, static_argnums=(0,))
+  def step(self, params, opt_state, features, mask, labels):
+    def risk(params):
+      logits = self._policy.apply(params, features)[..., 0]
+      logits = jnp.where(mask, logits, -jnp.inf)  # Mask out invalid actions
+      loss = optax.softmax_cross_entropy_with_integer_labels(logits, labels)
+      return loss.mean()
 
-class LinearPolicy:
-  pass
+    loss, grad = jax.value_and_grad(risk)(params)
+    updates, opt_state = self._optimizer.update(grad, opt_state, params)
+    params = optax.apply_updates(params, updates)
+    return params, opt_state, loss
+
+  def train(self):
+    # Collect data and initialize policy.
+    dataset = self.collect_data()
+    self._key, subkey = jax.random.split(self._key)
+    params = self._policy.init(subkey, dataset[0][0][0])
+
+    # Pad features.
+    extend_to = max(len(features) for (features, _) in dataset)
+    features = np.zeros((len(dataset), extend_to, dataset[0][0].shape[-1]))
+    mask = np.zeros((len(dataset), extend_to), bool)
+    labels = np.zeros(len(dataset), int)
+    for i, (feature, label) in enumerate(dataset):
+      features[i, :len(feature)] = feature
+      mask[i, :len(feature)] = True
+      labels[i] = label
+    features = jnp.asarray(features)
+    mask = jnp.asarray(mask)
+    labels = jnp.asarray(labels)
+
+    # Initialize dataloader and optimizer.
+    dataloader = jdl.DataLoaderJax(
+      jdl.ArrayDataset(features, mask, labels),
+      batch_size=self._batch_size,
+      shuffle=True,
+      drop_last=True
+    )
+    schedule = optax.exponential_decay(
+      1e-2, self._num_epochs * len(dataloader), 1e-2
+    )
+    self._optimizer = optax.adam(schedule)
+    opt_state = self._optimizer.init(params)
+
+    # Optimize parameters.
+    losses = np.zeros(self._num_epochs)
+    for i in range(self._num_epochs):
+      for (features_, mask_, labels_) in dataloader:
+        params, opt_state, loss = self.step(
+          params, opt_state, features_, mask_, labels_
+        )
+        losses[i] += loss / len(dataloader)
+
+    self._params = params
+    return losses
+
+  @functools.partial(jax.jit, static_argnums=(0,))
+  @functools.partial(jax.vmap, in_axes=(None, None, 0))
+  def policy(self, params, features):
+    return self._policy.apply(params, features)[..., 0]
+
+  def act(self, state):
+    state, features, _, parcel, trucks, truck_ids = self.get_features(state)
+    if parcel is None:
+      return state, None, None
+    if len(trucks) == 1:
+      return state, parcel[0], trucks[truck_ids[0]]
+    logits = self.policy(self._params, features)
+    truck = trucks[truck_ids[np.argmax(logits)]]
+    return state, parcel[0], truck
 
 
 class FVIController:
