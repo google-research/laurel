@@ -11,7 +11,6 @@ import jax_dataloader as jdl
 import jraph
 import numpy as np
 import optax
-from scipy import special
 
 from . import graph_utils
 from . import mdp
@@ -401,123 +400,6 @@ class GNNSupervisedController:
     ]
     truck = trucks[truck_ids[np.argmax(logits)]]
     return state, parcel[0], truck
-
-
-
-class FVIController:
-  """Fitted value iteration control algorithm."""
-
-  def __init__(
-      self,
-      env: mdp.MiddleMileMDP,
-      rng: np.random.Generator,
-      key: jax.random.PRNGKeyArray,
-  ):
-    self.env = env
-    self.rng = rng
-    self.buffer_idx = 0
-    self.buffer_size = 1000
-    self.batch_size = 10
-
-    # Initialize environment and replay buffer
-    self.state = self.env.reset(self.rng)
-    self.buffer = [self.state]
-
-    # Initialize value function.
-    self.value_fn = GraphNet(process_steps=10)
-    self.value_params = self.value_fn.init(key, self.state.to_jraph())
-
-  def learn(self, num_steps: int):
-    # TODO(onno): Repeat collection/update loop.
-    pass
-
-  @functools.partial(jax.jit, static_argnums=0)
-  def value(self, params: Any, state: Any) -> jax.Array:
-    return self.value_fn.apply(params, state)
-
-  def collect_data(self, num_steps: int):
-    """Sample transitions from environment and add to replay buffer."""
-    for _ in range(num_steps):
-      # Get next state.
-      action = self.act(self.state, explore=True)
-      if action is None:
-        self.state = self.env.reset(self.rng)
-      else:
-        self.state = self.env.step(*action, self.state)
-
-      # Add state to replay buffer.
-      self.buffer[self.buffer_idx : (self.buffer_idx + 1)] = [self.state]
-      self.buffer_idx = (self.buffer_idx + 1) % self.buffer_size
-
-  # @functools.partial(jax.jit, static_argnums=0)
-  # def loss(self, params, states, targets):
-  #   values = self.value(params, state)
-
-  # @functools.partial(jax.jit, static_argnums=0)
-  # def optimize(self, params, states, targets, opt_state):
-  #   # return params, opt_state
-  #   pass
-
-  def update(self, num_steps: int):
-    """Update the value function using data from the replay buffer."""
-    for _ in range(num_steps):
-      # Sample a batch from buffer.
-      states = self.rng.choice(self.buffer, self.batch_size, replace=False)
-
-      # Compute Bellman targets.
-      # TODO(onno): it might be more efficient to store all possible next
-      # states in the replay buffer. This depends on the speed of `env.step`.
-      targets = np.zeros(self.batch_size)
-      for i, state in enumerate(states):
-        actions = self.env.get_actions(state)
-        if actions is not None:
-          parcel, trucks = actions
-          for truck in trucks:
-            next_state = self.env.step(parcel, truck, state).to_jraph(
-                padded=True
-            )  # TODO(onno): No reward yet. (use delivery!) -> actually, all
-            # env.steps here are wrong because they ignore the delivery variable
-            targets[i] = max(self.value(self.params, next_state)[0], targets[i])
-
-      # Perform one optimization step.
-      states = graph_utils.pad_graphs_tuple(
-          jraph.batch([graph.to_jraph() for graph in states])
-      )
-      targets = jnp.asarray(targets)
-      self.params, self.opt_state = self.optimize(
-          self.params, states, targets, self.opt_state
-      )
-
-  def act(
-      self, state: graph_utils.Graph, explore: bool = False
-  ) -> tuple[int, int]:
-    """Policy based on learned value function and Boltzmann exploration."""
-    # Get available actions (parcel with trucks) from given state.
-    actions = self.env.get_actions(state)
-    if actions is None:
-      return None
-    parcel, trucks = actions
-
-    # No need to compute values for single available action.
-    if len(trucks) == 1:
-      return parcel, trucks[0]
-
-    # Calculate values of resulting next states for all actions.
-    values = np.zeros(len(trucks))
-    for i, truck in enumerate(trucks):
-      next_state = self.env.step(parcel, truck, state)
-      values[i] = self.value(
-          self.value_params, next_state.to_jraph(padded=True)
-      )[0]
-
-    if explore:
-      # Sample action from Boltzmann distribution.
-      probabilities = special.softmax(self.inv_temp * values)
-      index = np.where(self.rng.multinomial(1, probabilities))[0][0]
-      return parcel, trucks[index]
-
-    # Return best action without exploration.
-    return parcel, trucks[np.argmax(values)]
 
 
 class GraphNet(nn.Module):
