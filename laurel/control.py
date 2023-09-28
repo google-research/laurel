@@ -958,9 +958,15 @@ class GNN_PPO:
       for t in range(num_steps):
         logps[t, :len(logps_het[t])] = logps_het[t]
         mask[t, :len(logps_het[t])] = True
-      
+
       # Pad graphs.
-      # observations = jraph.
+      sizes = np.array([
+        (len(graph.nodes) + 1, len(graph.edges)) for graph in observations_het
+      ]).max(0)
+      # self._edges_len = sizes[1]
+      observations = [
+        jraph.pad_with_graphs(graph, *sizes) for graph in observations_het
+      ]
 
       # Update the policy.
       for k in pb_actor(range(self._num_actor_updates)):
