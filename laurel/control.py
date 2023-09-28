@@ -445,6 +445,8 @@ class LinearPPO:
       num_rollouts: int,
       num_actor_updates: int,
       num_critic_updates: int,
+      actor_lr: float,
+      critic_lr: float,
       exploration_inv_temperature: float = 0.1,
       clip_eps: float = 0.2,
       batch_size: int = 32,
@@ -458,6 +460,8 @@ class LinearPPO:
     self._num_rollouts = num_rollouts
     self._num_actor_updates = num_actor_updates
     self._num_critic_updates = num_critic_updates
+    self._actor_lr = actor_lr
+    self._critic_lr = critic_lr
     self._exploration_inv_temperature = exploration_inv_temperature
     self._clip_eps = clip_eps
     self._batch_size = batch_size
@@ -620,8 +624,8 @@ class LinearPPO:
     self._params_critic = self._critic.init(key2, features[0])
 
     # Initialize optimizers.
-    self._actor_optimizer = optax.adam(0.01)
-    self._critic_optimizer = optax.adam(0.1)
+    self._actor_optimizer = optax.adam(self._actor_lr)
+    self._critic_optimizer = optax.adam(self._critic_lr)
     self._actor_opt_state = self._actor_optimizer.init(self._actor_params)
     self._critic_opt_state = self._critic_optimizer.init(self._params_critic)
 

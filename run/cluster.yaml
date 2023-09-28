@@ -1,0 +1,18 @@
+# - Default cluster settings -
+restarts: 1
+script_relative_path: "src/main.py"
+results_dir: "laurel/dat/runs"
+
+cluster_requirements:
+  request_cpus: 1
+  request_gpus: 0
+  memory_in_mb: 4096
+  bid: 10  # 2
+
+hyperparam_list: []
+fixed_params: {}
+
+run_in_working_dir: true
+remove_jobs_dir: false
+
+environment_setup: {}
