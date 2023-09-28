@@ -202,7 +202,7 @@ def make_random_network(
   nx.set_edge_attributes(
       network,
       name='weight',
-      values=dict(zip(network.edges, weights, strict=True)),
+      values=dict(zip(network.edges, weights)),
   )
 
   # Node features for time-expanded network: (location, time).
