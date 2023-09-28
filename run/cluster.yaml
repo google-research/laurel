@@ -7,7 +7,7 @@ cluster_requirements:
   request_cpus: 1
   request_gpus: 0
   memory_in_mb: 4096
-  bid: 10  # 2
+  bid: 15
 
 hyperparam_list: []
 fixed_params: {}
