@@ -4,7 +4,7 @@ from collections.abc import Mapping, Sequence
 
 import numpy as np
 
-from . import graph_utils
+from laurel import graph_utils
 
 
 class MiddleMileMDP:
@@ -16,7 +16,7 @@ class MiddleMileMDP:
       timesteps: int,
       num_trucks_per_step: int,
       max_truck_duration: int,
-      num_parcels: int,
+      num_parcels: int | Sequence[int],
       mean_route_length: int,
       max_truck_capacity: float = 1,
       unit_capacities: bool = False,
@@ -137,6 +137,11 @@ class MiddleMileMDP:
     Returns:
       The new MDP state.
     """
+    num_parcels = (
+      self._num_parcels
+      if np.isscalar(self._num_parcels)
+      else rng.choice(self._num_parcels)
+    )
     if self._network is None or not self._static_network:
       # Sample logistics network and prune skippable nodes/edges.
       self._empty_state, self._network, self._distances = (
@@ -163,7 +168,7 @@ class MiddleMileMDP:
         state=self._empty_state,
         network=self._network,
         distances=self._distances,
-        num_parcels=self._num_parcels,
+        num_parcels=num_parcels,
         mean_route_length=self._mean_route_length,
         min_parcel_weight=self._min_parcel_weight,
         max_parcel_weight=self._max_parcel_weight,
