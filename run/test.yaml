@@ -1,26 +1,24 @@
-name: test
+__import__: run/cluster.yaml
 
-# __import__: run/cluster.yaml
+# Experiment name
+optimization_procedure_name: &name test
 
-# # Experiment name
-# optimization_procedure_name: &name test
+fixed_params:
+  __import_promise__: run/defaults.yaml
+  name: *name
 
-# fixed_params:
-#   __import_promise__: run/defaults.yaml
-#   name: *name
+  # Hyperparameters
+  algorithm: ppo
+  function_type: linear
+  num_epochs: 5
+  num_rollouts: 5
+  num_actor_updates: 100
+  num_critic_updates: 100
 
-#   # Hyperparameters
-#   algorithm: ppo
-#   function_type: linear
-#   num_epochs: 5
-#   num_rollouts: 5
-#   num_actor_updates: 100
-#   num_critic_updates: 100
-
-# hyperparam_list:
-#   - param: actor-lr
-#     values: [0.01, 0.1]
-#   - param: critic-lr
-#     values: [0.01, 0.1]
-#   - param: seed
-#     values: [0, 1]
+hyperparam_list:
+  - param: actor-lr
+    values: [0.01, 0.1]
+  - param: critic-lr
+    values: [0.01, 0.1]
+  - param: seed
+    values: [0, 1]
