@@ -417,7 +417,7 @@ class GNNSupervisedController:
 
   @functools.partial(jax.jit, static_argnums=(0,))
   def policy(self, params, features):
-    return self._policy.apply(params, features)
+    return self._policy.apply(params, features).edges.ravel()
 
   def act(self, state):
     state, features, _, parcel, trucks, truck_ids = self.get_features(state)
@@ -426,9 +426,7 @@ class GNNSupervisedController:
     if len(trucks) == 1:
       return state, parcel[0], trucks[truck_ids[0]]
     features = graph_utils.pad_graphs_tuple(features)
-    logits = self.policy(self._params, features).edges.ravel()[
-      jnp.array(truck_ids)
-    ]
+    logits = self.policy(self._params, features)[jnp.array(truck_ids)]
     truck = trucks[truck_ids[np.argmax(logits)]]
     return state, parcel[0], truck
 
@@ -572,14 +570,14 @@ class LinearPPO:
       params,
       opt_state,
       critic_params,
-      observation,
-      action,
+      observations,
+      actions,
       logps_old,
       mask
   ):
     def risk(params):
       losses, kls = self.actor_loss(
-        params, critic_params, observation, action, logps_old, mask
+        params, critic_params, observations, actions, logps_old, mask
       )
       return losses.mean(), kls.mean()
     (loss, kl), grad = jax.value_and_grad(risk, has_aux=True)(params)
@@ -597,10 +595,10 @@ class LinearPPO:
 
   @functools.partial(jax.jit, static_argnums=(0,))
   def critic_update(
-    self, params, opt_state, observation, action, return_
+    self, params, opt_state, observations, actions, returns
   ):
     def risk(params):
-      loss = self.critic_loss(params, observation, action, return_)
+      loss = self.critic_loss(params, observations, actions, returns)
       return loss.mean()
     loss, grad = jax.value_and_grad(risk)(params)
     updates, opt_state = self._critic_optimizer.update(grad, opt_state, params)
@@ -707,11 +705,10 @@ class LinearPPO:
   @functools.partial(jax.jit, static_argnums=(0,))
   @functools.partial(jax.vmap, in_axes=(None, None, 0))
   def policy(self, params, features):
-    scores = (
+    return (
       self._actor.apply(params, features)[..., 0]
       * self._exploration_inv_temperature
     )
-    return scores
 
   def act(self, state):
     state, features, _, parcel, trucks, truck_ids = self.get_features(state)
@@ -722,36 +719,6 @@ class LinearPPO:
     logits = self.policy(self._actor_params, features)
     truck = trucks[truck_ids[np.argmax(logits)]]
     return state, parcel[0], truck
-
-
-class GraphNet(nn.Module):
-  """Encode-process-decode graph net architecture."""
-
-  process_steps: int
-
-  @nn.compact
-  def __call__(self, state: jraph.GraphsTuple):
-    def jraph_mlp(layers, residual=0):
-      return jraph.concatenated_args(MLP(layers, residual))
-
-    encoder = jraph.GraphNetwork(
-        update_edge_fn=jraph_mlp([16, 16]),
-        update_node_fn=jraph_mlp([16, 16]),
-    )
-    processor = jraph.GraphNetwork(
-        update_edge_fn=jraph_mlp([16, 16], residual=True),
-        update_node_fn=jraph_mlp([16, 16], residual=True),
-    )
-    decoder = jraph.GraphNetwork(
-        update_edge_fn=jraph_mlp([16, 1]),
-        update_node_fn=None,
-    )
-
-    x = encoder(state)
-    for _ in range(self.process_steps):
-      x = processor(x)
-    x = decoder(x)
-    return x
 
 
 class GNN_PPO:
@@ -848,7 +815,9 @@ class GNN_PPO:
         continue
 
       # Use truck and get next state.
-      logits = special.log_softmax(self.policy(self._actor_params, features))
+      logits = special.log_softmax(
+        self.policy(self._actor_params, features)[jnp.array(truck_ids)]
+      )
       action = self._rng.choice(len(trucks), p=np.exp(logits))
       exploration += action == np.argmax(logits)
       truck = trucks[truck_ids[action]]
@@ -982,17 +951,16 @@ class GNN_PPO:
       # Round padding size to next power of 2.
       max_num_actions = int(2 ** np.ceil(np.log2(max_num_actions)))
 
-      # Pad heteregeneous data.
-      num_steps = len(observations_het)
-      observations = np.zeros(
-        (num_steps, max_num_actions, observations_het[0].shape[-1])
-      )
+      # Pad log-probabilities.
+      num_steps = len(logps_het)
       logps = np.ones((num_steps, max_num_actions)) * (-np.inf)
       mask = np.zeros((num_steps, max_num_actions), bool)
       for t in range(num_steps):
-        observations[t, :len(observations_het[t])] = observations_het[t]
-        logps[t, :len(observations_het[t])] = logps_het[t]
-        mask[t, :len(observations_het[t])] = True
+        logps[t, :len(logps_het[t])] = logps_het[t]
+        mask[t, :len(logps_het[t])] = True
+      
+      # Pad graphs.
+      observations = jraph.
 
       # Update the policy.
       for k in pb_actor(range(self._num_actor_updates)):
@@ -1033,7 +1001,10 @@ class GNN_PPO:
 
   @functools.partial(jax.jit, static_argnums=(0,))
   def policy(self, params, features):
-    return self._actor.apply(params, features)
+    return (
+      self._actor.apply(params, features).edges.ravel()
+      * self._exploration_inv_temperature
+    )
 
   def act(self, state):
     state, features, _, parcel, trucks, truck_ids = self.get_features(state)
@@ -1042,9 +1013,7 @@ class GNN_PPO:
     if len(trucks) == 1:
       return state, parcel[0], trucks[truck_ids[0]]
     features = graph_utils.pad_graphs_tuple(features)
-    logits = self.policy(self._actor_params, features).edges.ravel()[
-      jnp.array(truck_ids)
-    ]
+    logits = self.policy(self._actor_params, features)[jnp.array(truck_ids)]
     truck = trucks[truck_ids[np.argmax(logits)]]
     return state, parcel[0], truck
 
@@ -1093,39 +1062,39 @@ class MLP(nn.Module):
     return x + y
 
 
-if __name__ == '__main__':
-  rng = np.random.default_rng(42)
-  key = jax.random.PRNGKey(42)
+# if __name__ == '__main__':
+#   rng = np.random.default_rng(42)
+#   key = jax.random.PRNGKey(42)
 
-  # Initialize training MDP.
-  env = mdp.MiddleMileMDP(
-      num_hubs=10,
-      timesteps=50,
-      num_trucks_per_step=10,
-      max_truck_duration=5,
-      num_parcels=200,
-      mean_route_length=10,
-      cut_capacities=0,
-      unit_weights=True,
-      unit_capacities=True,
-  )
+#   # Initialize training MDP.
+#   env = mdp.MiddleMileMDP(
+#       num_hubs=10,
+#       timesteps=50,
+#       num_trucks_per_step=10,
+#       max_truck_duration=5,
+#       num_parcels=200,
+#       mean_route_length=10,
+#       cut_capacities=0,
+#       unit_weights=True,
+#       unit_capacities=True,
+#   )
 
-  from tqdm import tqdm
-  controller = LinearPPO(rng, key, env, 100, 5, 100, 100)
-  losses_actor, losses_critic, exploration, performance = controller.train(
-    pb_epoch=tqdm,
-    pb_rollout=functools.partial(tqdm, leave=False),
-    pb_actor=functools.partial(tqdm, leave=False),
-    pb_critic=functools.partial(tqdm, leave=False),
-  )
+#   from tqdm import tqdm
+#   controller = LinearPPO(rng, key, env, 100, 5, 100, 100)
+#   losses_actor, losses_critic, exploration, performance = controller.train(
+#     pb_epoch=tqdm,
+#     pb_rollout=functools.partial(tqdm, leave=False),
+#     pb_actor=functools.partial(tqdm, leave=False),
+#     pb_critic=functools.partial(tqdm, leave=False),
+#   )
 
-  breakpoint()
+#   breakpoint()
 
-  state, _ = env.reset(rng)
-  _, features, *_ = controller.get_features(state)
-  controller.q(controller._critic_params, features)
-  controller.policy(controller._actor_params, features)
+#   state, _ = env.reset(rng)
+#   _, features, *_ = controller.get_features(state)
+#   controller.q(controller._critic_params, features)
+#   controller.policy(controller._actor_params, features)
 
-  import matplotlib.pyplot as plt
-  plt.plot(performance.mean(1))
-  plt.show()  # it seems to learn?? increase the number of epochs further.
+#   import matplotlib.pyplot as plt
+#   plt.plot(performance.mean(1))
+#   plt.show()  # it seems to learn?? increase the number of epochs further.
