@@ -549,10 +549,10 @@ class LinearPPO:
   @functools.partial(jax.vmap, in_axes=(None, None, None, 0, 0, 0, 0))
   @functools.partial(jax.jit, static_argnums=(0,))
   def actor_loss(
-    self, actor_params, params_critic, observation, action, logps_old, mask
+    self, actor_params, critic_params, observation, action, logps_old, mask
   ):
     # Compute advantage estimate.
-    q_values = self.q(params_critic, observation)
+    q_values = self.q(critic_params, observation)
     value = q_values @ jnp.exp(logps_old)
     advantage = q_values[action] - value
 
@@ -572,7 +572,7 @@ class LinearPPO:
       self,
       params,
       opt_state,
-      params_critic,
+      critic_params,
       observation,
       action,
       logps_old,
@@ -580,7 +580,7 @@ class LinearPPO:
   ):
     def risk(params):
       losses, kls = self.actor_loss(
-        params, params_critic, observation, action, logps_old, mask
+        params, critic_params, observation, action, logps_old, mask
       )
       return losses.mean(), kls.mean()
     (loss, kl), grad = jax.value_and_grad(risk, has_aux=True)(params)
@@ -591,9 +591,9 @@ class LinearPPO:
   @functools.partial(jax.vmap, in_axes=(None, None, 0, 0, 0))
   @functools.partial(jax.jit, static_argnums=(0,))
   def critic_loss(
-    self, params_critic, observation, action, return_
+    self, critic_params, observation, action, return_
   ):
-    q_value = self._critic.apply(params_critic, observation[action])
+    q_value = self._critic.apply(critic_params, observation[action])
     return (q_value - return_) ** 2
 
   @functools.partial(jax.jit, static_argnums=(0,))
@@ -621,13 +621,13 @@ class LinearPPO:
     state, features, *_ = self.get_features(state)
     self._key, key1, key2 = jax.random.split(self._key, 3)
     self._actor_params = self._actor.init(key1, features[0])
-    self._params_critic = self._critic.init(key2, features[0])
+    self._critic_params = self._critic.init(key2, features[0])
 
     # Initialize optimizers.
     self._actor_optimizer = optax.adam(self._actor_lr)
     self._critic_optimizer = optax.adam(self._critic_lr)
     self._actor_opt_state = self._actor_optimizer.init(self._actor_params)
-    self._critic_opt_state = self._critic_optimizer.init(self._params_critic)
+    self._critic_opt_state = self._critic_optimizer.init(self._critic_params)
 
     # Main training loop.
     actor_losses = np.zeros((self._num_epochs, self._num_actor_updates))
@@ -673,7 +673,7 @@ class LinearPPO:
         params, opt_state, loss, kl = self.actor_update(
           self._actor_params,
           self._actor_opt_state,
-          self._params_critic,
+          self._critic_params,
           jnp.asarray(observations),
           jnp.asarray(actions),
           jnp.asarray(logps),
@@ -688,13 +688,13 @@ class LinearPPO:
       # Update the critic.
       for k in pb_critic(range(self._num_critic_updates)):
         params, opt_state, loss = self.critic_update(
-          self._params_critic,
+          self._critic_params,
           self._critic_opt_state,
           jnp.asarray(observations),
           jnp.asarray(actions),
           jnp.asarray(returns)
         )
-        self._params_critic = params
+        self._critic_params = params
         self._critic_opt_state = opt_state
         critic_losses[i, k] = loss
 
@@ -799,7 +799,7 @@ if __name__ == '__main__':
 
   state, _ = env.reset(rng)
   _, features, *_ = controller.get_features(state)
-  controller.q(controller._params_critic, features)
+  controller.q(controller._critic_params, features)
   controller.policy(controller._actor_params, features)
 
   import matplotlib.pyplot as plt
