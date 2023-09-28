@@ -21,8 +21,8 @@ optax = "^0.1.7"
 jax-dataloader = "^0.0.5"
 # oetils = "^0.1.1"
 # tueplots = "^0.0.10"
-ipython = "^8.15.0"
-ipdb = "^0.13.13"
+# ipython = "^8.15.0"
+# ipdb = "^0.13.13"
 orbax-checkpoint = "^0.4.0"
 
 
