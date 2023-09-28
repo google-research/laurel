@@ -54,8 +54,15 @@ np.save(dir_ / 'exploration.npy', exploration)
 np.save(dir_ / 'performance.npy', performance)
 
 # Save trained parameters.
-PyTreeCheckpointer().save(dir_ / 'actor_params', controller._actor_params)
-PyTreeCheckpointer().save(dir_ / 'critic_params', controller._critic_params)
+# Orbax disabled because of locking error.
+# PyTreeCheckpointer().save(dir_ / 'actor_params', controller._actor_params)
+# PyTreeCheckpointer().save(dir_ / 'critic_params', controller._critic_params)
+from flax.training import checkpoints
+checkpoints.save_checkpoint(dir_ / 'actor_params', controller._actor_params, 0)
+checkpoints.save_checkpoint(
+    dir_ / 'critic_params', controller._critic_params, 0
+)
+
 
 # Announce results to cluster-utils.
 save_metrics_params({'final_mean_perf': performance[-1].mean()}, params)
