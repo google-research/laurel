@@ -960,7 +960,7 @@ class GNN_PPO:
         mask[t, :len(logps_het[t])] = True
       
       # Pad graphs.
-      observations = jraph.
+      # observations = jraph.
 
       # Update the policy.
       for k in pb_actor(range(self._num_actor_updates)):
