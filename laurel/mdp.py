@@ -1,6 +1,7 @@
 """Definition of the Middle-Mile MDP."""
 
 from collections.abc import Mapping, Sequence
+from typing import Optional, Union
 
 import numpy as np
 
@@ -16,7 +17,7 @@ class MiddleMileMDP:
       timesteps: int,
       num_trucks_per_step: int,
       max_truck_duration: int,
-      num_parcels: int | Sequence[int],
+      num_parcels: Union[int, Sequence[int]],
       mean_route_length: int,
       max_truck_capacity: float = 1,
       unit_capacities: bool = False,
@@ -188,10 +189,10 @@ class MiddleMileMDP:
 
   def get_next_parcel(
       self,
-      state: graph_utils.Graph | None = None,
+      state: Optional[graph_utils.Graph] = None,
       prune_parcel: bool = True,
       last_parcel: bool = False,
-  ) -> tuple[graph_utils.Graph, int | None, Sequence[int] | None]:
+  ) -> tuple[graph_utils.Graph, Optional[int], Optional[Sequence[int]]]:
     """Gets the next parcel to route.
 
     Retrieves the earliest (default) or last parcel in the network which has
@@ -247,11 +248,11 @@ class MiddleMileMDP:
 
   def get_actions(
       self,
-      state: graph_utils.Graph | None = None,
-      parcel: int | None = None,
+      state: Optional[graph_utils.Graph] = None,
+      parcel: Optional[int] = None,
       prune_parcel: bool = True,
       last_parcel: bool = False,
-  ) -> tuple[graph_utils.Graph, int | None, Sequence[int] | None]:
+  ) -> tuple[graph_utils.Graph, Optional[int], Optional[Sequence[int]]]:
     """Retrieves all available trucks for `parcel`.
 
     Args:
@@ -319,17 +320,17 @@ class MiddleMileMDP:
   def get_feature_graph(
       self,
       num_steps: int,
-      state: graph_utils.Graph | None = None,
-      parcel: int | None = None,
+      state: Optional[graph_utils.Graph] = None,
+      parcel: Optional[int] = None,
       only_reachable: bool = False,
-      min_phantom_weight: float | None = 0,
+      min_phantom_weight: Optional[float] = 0,
       prune_parcel: bool = True,
       last_parcel: bool = False,
   ) -> tuple[
       graph_utils.Graph,
-      graph_utils.Graph | None,
-      tuple[int, int] | None,
-      Mapping[int, int] | None,
+      Optional[graph_utils.Graph],
+      Optional[tuple[int, int]],
+      Optional[Mapping[int, int]],
   ]:
     """Extracts feature graph for next parcel to consider.
 
@@ -652,9 +653,9 @@ class MiddleMileMDP:
       self,
       parcel: int,
       truck: int,
-      state: graph_utils.Graph | None = None,
+      state: Optional[graph_utils.Graph] = None,
       prune: bool = True,
-  ) -> tuple[graph_utils.Graph, bool, int | None]:
+  ) -> tuple[graph_utils.Graph, bool, Optional[int]]:
     """Does one step of the environment dynamics: puts parcel into truck.
 
     Args:
@@ -736,7 +737,7 @@ class MiddleMileMDP:
     return state, delivery, parcel
 
   def _check_state(
-      self, state: graph_utils.Graph | None
+      self, state: Optional[graph_utils.Graph]
   ) -> tuple[graph_utils.Graph, bool]:
     """Checks if state has been initialized.
 

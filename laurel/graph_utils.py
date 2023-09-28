@@ -6,6 +6,7 @@ import collections
 from collections.abc import Mapping, Sequence
 import dataclasses
 import enum
+from typing import Optional
 
 import jax.numpy as jnp
 import jraph
@@ -635,12 +636,12 @@ def prune_parcel(network: Graph, parcel: int) -> tuple[np.ndarray, np.ndarray]:
 def prune_network(
     network: Graph,
     prune_parcels: bool = True,
-    solution: SolutionDict | None = None,
+    solution: Optional[SolutionDict] = None,
 ) -> tuple[
     Graph,
     Mapping[tuple[tuple[int, int], tuple[int, int]], Sequence[tuple[int, int]]],
-    Mapping[int, set[int]] | None,
-    SolutionDict | None,
+    Optional[Mapping[int, set[int]]],
+    Optional[SolutionDict],
 ]:
   """Removes nodes and edges from network that are not relevant.
 
@@ -881,7 +882,7 @@ def clean_step(
     prev_node: int,
     remove_parcel: bool,
     prune: bool = True,
-) -> tuple[Graph, int | None]:
+) -> tuple[Graph, Optional[int]]:
   """Prune state after a parcel has been moved.
 
   This function is more efficient than calling `prune_network`, because it only
@@ -988,8 +989,8 @@ def clean_step(
 def draw_network(
     network: Graph,
     ax: plt.Axes,
-    solution: SolutionDict | None = None,
-    node_feature: int | None = None,
+    solution: Optional[SolutionDict] = None,
+    node_feature: Optional[int] = None,
     time_axis: bool = True,
     index_labels: bool = False,
 ) -> None:

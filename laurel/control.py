@@ -2,7 +2,7 @@
 
 from collections.abc import Mapping, Sequence
 import functools
-from typing import Any
+from typing import Any, Optional, Union
 
 import flax.linen as nn
 import jax
@@ -29,7 +29,7 @@ class LinearSupervisedController:
       num_epochs: int,
       batch_size: int = 32,
       step_prune: bool = False,
-      feature_graph_kwargs: Mapping[str, Any] | None = None,
+      feature_graph_kwargs: Optional[Mapping[str, Any]] = None,
   ):
     self._rng = rng
     self._key = key
@@ -74,10 +74,10 @@ class LinearSupervisedController:
   def collect_data(
       self,
       pb=None
-  ) -> Sequence[
-      tuple[Mapping[int, jax.Array], int]
-      | tuple[jraph.GraphsTuple, Sequence[int], int, int]
-  ]:
+  ) -> Sequence[Union[
+      tuple[Mapping[int, jax.Array], int],
+      tuple[jraph.GraphsTuple, Sequence[int], int, int]
+  ]]:
     """Collect dataset by running rollouts."""
     pb = pb if pb is not None else (lambda x: x)
     dataset = []
@@ -231,7 +231,7 @@ class GNNSupervisedController:
       num_feature_graph_steps: int,
       batch_size: int = 32,
       step_prune: bool = False,
-      feature_graph_kwargs: Mapping[str, Any] | None = None,
+      feature_graph_kwargs: Optional[Mapping[str, Any]] = None,
   ):
     self._rng = rng
     self._key = key
@@ -281,10 +281,10 @@ class GNNSupervisedController:
   def collect_data(
       self,
       pb=None
-  ) -> Sequence[
-      tuple[Mapping[int, jax.Array], int]
-      | tuple[jraph.GraphsTuple, Sequence[int], int, int]
-  ]:
+  ) -> Sequence[Union[
+      tuple[Mapping[int, jax.Array], int],
+      tuple[jraph.GraphsTuple, Sequence[int], int, int]
+  ]]:
     """Collect dataset by running rollouts."""
     pb = pb if pb is not None else (lambda x: x)
     dataset = []
@@ -451,7 +451,7 @@ class LinearPPO:
       clip_eps: float = 0.2,
       batch_size: int = 32,
       step_prune: bool = False,
-      feature_graph_kwargs: Mapping[str, Any] | None = None,
+      feature_graph_kwargs: Optional[Mapping[str, Any]] = None,
   ):
     self._rng = rng
     self._key = key
