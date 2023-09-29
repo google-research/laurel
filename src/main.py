@@ -1,9 +1,10 @@
 from pathlib import Path
 
-from cluster.settings import read_params_from_cmdline, save_metrics_params
-import numpy as np
-from orbax.checkpoint import PyTreeCheckpointer
 import jax
+import numpy as np
+from cluster.settings import read_params_from_cmdline, save_metrics_params
+from flax.training import checkpoints
+from orbax.checkpoint import PyTreeCheckpointer
 from tqdm import tqdm
 
 from laurel import control, mdp
@@ -32,17 +33,32 @@ env = mdp.MiddleMileMDP(
     unit_capacities=True,
 )
 
-controller = control.LinearPPO(
-    rng,
-    key,
-    env,
-    params.num_epochs,
-    params.num_rollouts,
-    params.num_actor_updates,
-    params.num_critic_updates,
-    params.actor_lr,
-    params.critic_lr
-)
+if params.function_type == 'linear':
+    controller = control.LinearPPO(
+        rng,
+        key,
+        env,
+        params.num_epochs,
+        params.num_rollouts,
+        params.num_actor_updates,
+        params.num_critic_updates,
+        params.actor_lr,
+        params.critic_lr
+    )
+else:
+    controller = control.GNN_PPO(
+        rng,
+        key,
+        env,
+        params.num_epochs,
+        params.num_rollouts,
+        params.num_actor_updates,
+        params.num_critic_updates,
+        params.actor_lr,
+        params.critic_lr,
+        params.num_feature_graph_steps,
+        batch_size=params.batch_size
+    )
 losses_actor, losses_critic, exploration, performance = controller.train(
     pb_epoch=tqdm
 )
@@ -57,7 +73,6 @@ np.save(dir_ / 'performance.npy', performance)
 # Orbax disabled because of locking error.
 # PyTreeCheckpointer().save(dir_ / 'actor_params', controller._actor_params)
 # PyTreeCheckpointer().save(dir_ / 'critic_params', controller._critic_params)
-from flax.training import checkpoints
 checkpoints.save_checkpoint(dir_ / 'actor_params', controller._actor_params, 0)
 checkpoints.save_checkpoint(
     dir_ / 'critic_params', controller._critic_params, 0

@@ -24,6 +24,7 @@ jax-dataloader = "^0.0.5"
 orbax-checkpoint = "^0.4.0"
 ipython = "^8.15.0"
 ipdb = "^0.13.13"
+pandas = "^2.1.1"
 
 
 [build-system]

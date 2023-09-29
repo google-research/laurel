@@ -23,7 +23,7 @@ class LinearSupervisedController:
   def __init__(
       self,
       rng: np.random.Generator,
-      key: jax.random.PRNGKeyArray,
+      key: jax.Array,
       env: mdp.MiddleMileMDP,
       num_rollouts: int,
       num_epochs: int,
@@ -224,7 +224,7 @@ class GNNSupervisedController:
   def __init__(
       self,
       rng: np.random.Generator,
-      key: jax.random.PRNGKeyArray,
+      key: jax.Array,
       env: mdp.MiddleMileMDP,
       num_rollouts: int,
       num_epochs: int,
@@ -437,7 +437,7 @@ class LinearPPO:
   def __init__(
       self,
       rng: np.random.Generator,
-      key: jax.random.PRNGKeyArray,
+      key: jax.Array,
       env: mdp.MiddleMileMDP,
       num_epochs: int,
       num_rollouts: int,
@@ -727,7 +727,7 @@ class GNN_PPO:
   def __init__(
       self,
       rng: np.random.Generator,
-      key: jax.random.PRNGKeyArray,
+      key: jax.Array,
       env: mdp.MiddleMileMDP,
       num_epochs: int,
       num_rollouts: int,
@@ -799,7 +799,6 @@ class GNN_PPO:
       state, features, _, parcel, trucks, truck_ids = (
         self.get_features(state)
       )
-      features = graph_utils.pad_graphs_tuple(features)
       if parcel is None:
         # No parcel left in network.
         break
@@ -815,12 +814,16 @@ class GNN_PPO:
         continue
 
       # Use truck and get next state.
-      logits = special.log_softmax(
-        self.policy(self._actor_params, features)[jnp.array(truck_ids)]
-      )
-      action = self._rng.choice(len(trucks), p=np.exp(logits))
-      exploration += action == np.argmax(logits)
-      truck = trucks[truck_ids[action]]
+      features_padded = graph_utils.pad_graphs_tuple(features)
+      logits = self.policy(self._actor_params, features_padded)
+      logits = jnp.where(features_padded.edges[:, -2], logits, -jnp.inf)
+      logits = special.log_softmax(logits)
+      # logits = special.log_softmax(
+      #   self.policy(self._actor_params, features_padded)[jnp.array(truck_ids)]
+      # )
+      action = self._rng.choice(len(logits), p=np.exp(logits))
+      exploration += action != np.argmax(logits)
+      truck = trucks[action]
       state, delivery, _ = self._env.step(
         parcel[0], truck, state, prune=self._step_prune
       )
@@ -841,19 +844,16 @@ class GNN_PPO:
       deliveries / self._env._num_parcels
     )
 
-  @functools.partial(jax.vmap, in_axes=(None, None, None, 0, 0, 0, 0))
+  @functools.partial(jax.vmap, in_axes=(None, 0, 0, 0, 0, 0, 0))
   @functools.partial(jax.jit, static_argnums=(0,))
-  def actor_loss(
-    self, actor_params, critic_params, observation, action, logps_old, mask
-  ):
+  def actor_loss(self, q_values, logps, action, logps_old, trucks, mask):
     # Compute advantage estimate.
-    q_values = self.q(critic_params, observation)
     value = q_values @ jnp.exp(logps_old)
     advantage = q_values[action] - value
 
     # Compute PPO loss.
-    logps = self.policy(actor_params, observation)
-    logps = nn.log_softmax(jnp.where(mask, logps, -jnp.inf))
+    logps = nn.log_softmax(jnp.where(trucks, logps, -jnp.inf))
+    # logps = nn.log_softmax(logps[trucks])
     ratio = jnp.exp(logps[action] - logps_old[action])
     loss = -jnp.minimum(
       ratio * advantage,
@@ -862,20 +862,25 @@ class GNN_PPO:
     kl = logps_old[action] - logps[action]
     return loss, kl
 
-  @functools.partial(jax.jit, static_argnums=(0,))
+  @functools.partial(jax.jit, static_argnums=(0, 8))
   def actor_update(
       self,
       params,
       opt_state,
       critic_params,
-      observation,
-      action,
+      observations,
+      actions,
       logps_old,
-      mask
+      mask,
+      num_edges
   ):
     def risk(params):
+      # Apply actor and critic GNNs.
+      q_values = self.q(critic_params, observations).reshape(-1, num_edges)
+      logps = self.policy(params, observations).reshape(-1, num_edges)
+      trucks = (observations.edges[:, -2] == 1).reshape(-1, num_edges)
       losses, kls = self.actor_loss(
-        params, critic_params, observation, action, logps_old, mask
+        q_values, logps, actions, logps_old, trucks, mask
       )
       return losses.mean(), kls.mean()
     (loss, kl), grad = jax.value_and_grad(risk, has_aux=True)(params)
@@ -883,20 +888,20 @@ class GNN_PPO:
     params = optax.apply_updates(params, updates)
     return params, opt_state, loss, kl
 
-  @functools.partial(jax.vmap, in_axes=(None, None, 0, 0, 0))
+  @functools.partial(jax.vmap, in_axes=(None, 0, 0, 0))
   @functools.partial(jax.jit, static_argnums=(0,))
-  def critic_loss(
-    self, critic_params, observation, action, return_
-  ):
-    q_value = self._critic.apply(critic_params, observation[action])
+  def critic_loss(self, q_values, action, return_):
+    q_value = q_values[action]
     return (q_value - return_) ** 2
 
-  @functools.partial(jax.jit, static_argnums=(0,))
+  @functools.partial(jax.jit, static_argnums=(0, 6))
   def critic_update(
-    self, params, opt_state, observation, action, return_
+    self, params, opt_state, observations, actions, returns, num_edges
   ):
     def risk(params):
-      loss = self.critic_loss(params, observation, action, return_)
+      q_values = self.q(params, observations).reshape(-1, num_edges)
+      # trucks = (observations.edges[:, -2] == 1).reshape(-1, num_edges)
+      loss = self.critic_loss(q_values, actions, returns)
       return loss.mean()
     loss, grad = jax.value_and_grad(risk)(params)
     updates, opt_state = self._critic_optimizer.update(grad, opt_state, params)
@@ -906,6 +911,7 @@ class GNN_PPO:
   def train(
       self, pb_epoch=None, pb_rollout=None, pb_actor=None, pb_critic=None
   ):
+    pba = pb_actor is not None
     pb_epoch = pb_epoch if pb_epoch is not None else (lambda x: x)
     pb_rollout = pb_rollout if pb_rollout is not None else (lambda x: x)
     pb_actor = pb_actor if pb_actor is not None else (lambda x: x)
@@ -925,85 +931,118 @@ class GNN_PPO:
     self._critic_opt_state = self._critic_optimizer.init(self._critic_params)
 
     # Main training loop.
-    actor_losses = np.zeros((self._num_epochs, self._num_actor_updates))
-    critic_losses = np.zeros((self._num_epochs, self._num_critic_updates))
+    actor_losses_ = [[] for _ in range(self._num_epochs)]
+    critic_losses_ = [[] for _ in range(self._num_epochs)]
     exploration = np.zeros((self._num_epochs, self._num_rollouts))
     performance = np.zeros((self._num_epochs, self._num_rollouts))
     for i in pb_epoch(range(self._num_epochs)):
       # Collect trajectories in environment.
       observations_het = []  # Heterogeneous data.
       actions = []
-      rewards = []
       returns = []
       logps_het = []  # Heterogeneous data.
-      max_num_actions = 0
       for j in pb_rollout(range(self._num_rollouts)):
         os, as_, rs, lps, exp, perf = self.rollout()
         observations_het.extend(os)
         actions.extend(as_)
-        rewards.extend(rs)
         returns.extend(np.cumsum(rs[::-1])[::-1])
         logps_het.extend(lps)
-        max_num_actions = max([max_num_actions] + [len(o) for o in os])
         exploration[i, j] = exp
         performance[i, j] = perf
 
-      # Round padding size to next power of 2.
-      max_num_actions = int(2 ** np.ceil(np.log2(max_num_actions)))
-
-      # Pad log-probabilities.
-      num_steps = len(logps_het)
-      logps = np.ones((num_steps, max_num_actions)) * (-np.inf)
-      mask = np.zeros((num_steps, max_num_actions), bool)
-      for t in range(num_steps):
-        logps[t, :len(logps_het[t])] = logps_het[t]
-        mask[t, :len(logps_het[t])] = True
-
       # Pad graphs.
       sizes = np.array([
-        (len(graph.nodes) + 1, len(graph.edges)) for graph in observations_het
+        (len(graph.nodes), len(graph.edges)) for graph in observations_het
       ]).max(0)
-      # self._edges_len = sizes[1]
+      sizes[0] = int(2 ** np.ceil(np.log2(sizes[0]))) + 1
+      sizes[1] = int(2 ** np.ceil(np.log2(sizes[1])))
+      num_edges = sizes[1]
       observations = [
         jraph.pad_with_graphs(graph, *sizes) for graph in observations_het
       ]
 
-      # Update the policy.
-      for k in pb_actor(range(self._num_actor_updates)):
-        params, opt_state, loss, kl = self.actor_update(
-          self._actor_params,
-          self._actor_opt_state,
-          self._critic_params,
-          jnp.asarray(observations),
-          jnp.asarray(actions),
-          jnp.asarray(logps),
-          jnp.asarray(mask)
-        )
-        if kl > 0.015:
-          break  # Early stopping if KL divergence is too large.
-        self._actor_params = params
-        self._actor_opt_state = opt_state
-        actor_losses[i, k] = loss
+      # Pad log-probabilities.
+      num_steps = len(logps_het)
+      logps = np.ones((num_steps, num_edges)) * (-np.inf)
+      mask = np.zeros((num_steps, num_edges), bool)
+      for t in range(num_steps):
+        logps[t, :len(logps_het[t])] = logps_het[t]
+        mask[t, :len(logps_het[t])] = True
+
+      # Shuffle and trim data.
+      idx = self._rng.permutation(len(observations))[
+        :(num_steps // self._batch_size) * self._batch_size
+      ]
+      observations = [observations[i] for i in idx]
+      actions = jnp.asarray(actions)[idx]
+      returns = jnp.asarray(returns)[idx]
+      logps = jnp.asarray(logps)[idx]
+      mask = jnp.asarray(mask)[idx]
+      batches = [
+        jraph.batch(
+          observations[k * self._batch_size : (k + 1) * self._batch_size]
+        ) for k in range(len(observations) // self._batch_size)
+      ]
+
+      # Update the actor.
+      for j in pb_actor(range(self._num_actor_updates)):
+        for k in range(len(observations) // self._batch_size):
+          indices = slice(k * self._batch_size, (k + 1) * self._batch_size)
+          batch = batches[k]
+          params, opt_state, loss, kl = self.actor_update(
+            self._actor_params,
+            self._actor_opt_state,
+            self._critic_params,
+            batch,
+            actions[indices],
+            logps[indices],
+            mask[indices],
+            num_edges
+          )
+          if kl > 1:
+            (pb_actor.func.write if pba else print)(
+              'KL early stopping after '
+              f'{j * len(observations) // self._batch_size + k} updates.'
+            )
+            break  # Early stopping if KL divergence is too large.
+          self._actor_params = params
+          self._actor_opt_state = opt_state
+          actor_losses_[i].append(loss)
+        else:
+          continue
+        break
 
       # Update the critic.
-      for k in pb_critic(range(self._num_critic_updates)):
-        params, opt_state, loss = self.critic_update(
-          self._critic_params,
-          self._critic_opt_state,
-          jnp.asarray(observations),
-          jnp.asarray(actions),
-          jnp.asarray(returns)
-        )
-        self._critic_params = params
-        self._critic_opt_state = opt_state
-        critic_losses[i, k] = loss
+      for j in pb_actor(range(self._num_critic_updates)):
+        for k in range(len(observations) // self._batch_size):
+          indices = slice(k * self._batch_size, (k + 1) * self._batch_size)
+          batch = batches[k]
+          params, opt_state, loss = self.critic_update(
+            self._critic_params,
+            self._critic_opt_state,
+            batch,
+            actions[indices],
+            returns[indices],
+            num_edges
+          )
+          self._critic_params = params
+          self._critic_opt_state = opt_state
+          critic_losses_[i].append(loss)
 
+    actor_losses = np.full(
+      (self._num_epochs, max(len(row) for row in actor_losses_)), np.nan
+    )
+    critic_losses = np.full(
+      (self._num_epochs, max(len(row) for row in critic_losses_)), np.nan
+    )
+    for i in range(self._num_epochs):
+      actor_losses[i, :len(actor_losses_[i])] = actor_losses_[i]
+      critic_losses[i, :len(critic_losses_[i])] = critic_losses_[i]
     return actor_losses, critic_losses, exploration, performance
 
   @functools.partial(jax.jit, static_argnums=(0,))
-  @functools.partial(jax.vmap, in_axes=(None, None, 0))
   def q(self, params, features):
-    return self._critic.apply(params, features)[..., 0]
+    return self._critic.apply(params, features).edges.ravel()
 
   @functools.partial(jax.jit, static_argnums=(0,))
   def policy(self, params, features):
@@ -1086,7 +1125,7 @@ class MLP(nn.Module):
 #   )
 
 #   from tqdm import tqdm
-#   controller = LinearPPO(rng, key, env, 100, 5, 100, 100)
+#   controller = GNN_PPO(rng, key, env, 30, 1, 10, 10, 0.001, 0.1, 2, batch_size=256)
 #   losses_actor, losses_critic, exploration, performance = controller.train(
 #     pb_epoch=tqdm,
 #     pb_rollout=functools.partial(tqdm, leave=False),
