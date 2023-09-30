@@ -35,29 +35,36 @@ env = mdp.MiddleMileMDP(
 
 if params.function_type == 'linear':
     controller = control.LinearPPO(
-        rng,
-        key,
-        env,
-        params.num_epochs,
-        params.num_rollouts,
-        params.num_actor_updates,
-        params.num_critic_updates,
-        params.actor_lr,
-        params.critic_lr
+        rng=rng,
+        key=key,
+        env=env,
+        num_rollouts_total=params.num_rollouts_total,
+        num_rollouts=params.num_rollouts,
+        num_actor_updates=params.num_actor_updates,
+        num_critic_updates=params.num_critic_updates,
+        actor_lr=params.actor_lr,
+        critic_lr=params.critic_lr,
+        exploration_inv_temperature=params.exploration_inv_temperature,
+        clip_eps=params.clip_eps,
+        kl_stop=params.kl_stop,
+        batch_size=params.batch_size,
     )
 else:
     controller = control.GNN_PPO(
-        rng,
-        key,
-        env,
-        params.num_epochs,
-        params.num_rollouts,
-        params.num_actor_updates,
-        params.num_critic_updates,
-        params.actor_lr,
-        params.critic_lr,
-        params.num_feature_graph_steps,
-        batch_size=params.batch_size
+        rng=rng,
+        key=key,
+        env=env,
+        num_rollouts_total=params.num_rollouts_total,
+        num_rollouts=params.num_rollouts,
+        num_actor_updates=params.num_actor_updates,
+        num_critic_updates=params.num_critic_updates,
+        actor_lr=params.actor_lr,
+        critic_lr=params.critic_lr,
+        num_feature_graph_steps=params.num_feature_graph_steps,
+        exploration_inv_temperature=params.exploration_inv_temperature,
+        clip_eps=params.clip_eps,
+        kl_stop=params.kl_stop,
+        batch_size=params.batch_size,
     )
 losses_actor, losses_critic, exploration, performance = controller.train(
     pb_epoch=tqdm

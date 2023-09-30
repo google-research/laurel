@@ -439,7 +439,7 @@ class LinearPPO:
       rng: np.random.Generator,
       key: jax.Array,
       env: mdp.MiddleMileMDP,
-      num_epochs: int,
+      num_rollouts_total: int,
       num_rollouts: int,
       num_actor_updates: int,
       num_critic_updates: int,
@@ -447,6 +447,7 @@ class LinearPPO:
       critic_lr: float,
       exploration_inv_temperature: float = 0.1,
       clip_eps: float = 0.2,
+      kl_stop: float = 0.1,
       batch_size: int = 32,
       step_prune: bool = False,
       feature_graph_kwargs: Optional[Mapping[str, Any]] = None,
@@ -454,7 +455,7 @@ class LinearPPO:
     self._rng = rng
     self._key = key
     self._env = env
-    self._num_epochs = num_epochs
+    self._num_epochs = num_rollouts_total // num_rollouts
     self._num_rollouts = num_rollouts
     self._num_actor_updates = num_actor_updates
     self._num_critic_updates = num_critic_updates
@@ -462,6 +463,7 @@ class LinearPPO:
     self._critic_lr = critic_lr
     self._exploration_inv_temperature = exploration_inv_temperature
     self._clip_eps = clip_eps
+    self._kl_stop = kl_stop
     self._batch_size = batch_size
     self._step_prune = step_prune
     self._feature_graph_kwargs = {
@@ -676,7 +678,7 @@ class LinearPPO:
           jnp.asarray(logps),
           jnp.asarray(mask)
         )
-        if kl > 0.015:
+        if kl > self._kl_stop:
           break  # Early stopping if KL divergence is too large.
         self._actor_params = params
         self._actor_opt_state = opt_state
@@ -729,7 +731,7 @@ class GNN_PPO:
       rng: np.random.Generator,
       key: jax.Array,
       env: mdp.MiddleMileMDP,
-      num_epochs: int,
+      num_rollouts_total: int,
       num_rollouts: int,
       num_actor_updates: int,
       num_critic_updates: int,
@@ -738,6 +740,7 @@ class GNN_PPO:
       num_feature_graph_steps: int,
       exploration_inv_temperature: float = 0.1,
       clip_eps: float = 0.2,
+      kl_stop: float = 0.1,
       batch_size: int = 32,
       step_prune: bool = False,
       feature_graph_kwargs: Optional[Mapping[str, Any]] = None,
@@ -745,7 +748,7 @@ class GNN_PPO:
     self._rng = rng
     self._key = key
     self._env = env
-    self._num_epochs = num_epochs
+    self._num_epochs = num_rollouts_total // num_rollouts
     self._num_rollouts = num_rollouts
     self._num_actor_updates = num_actor_updates
     self._num_critic_updates = num_critic_updates
@@ -753,6 +756,7 @@ class GNN_PPO:
     self._critic_lr = critic_lr
     self._exploration_inv_temperature = exploration_inv_temperature
     self._clip_eps = clip_eps
+    self._kl_stop = kl_stop
     self._num_feature_graph_steps = num_feature_graph_steps
     self._batch_size = batch_size
     self._step_prune = step_prune
@@ -999,7 +1003,7 @@ class GNN_PPO:
             mask[indices],
             num_edges
           )
-          if kl > 1:
+          if kl > self._kl_stop:
             (pb_actor.func.write if pba else print)(
               'KL early stopping after '
               f'{j * len(observations) // self._batch_size + k} updates.'
