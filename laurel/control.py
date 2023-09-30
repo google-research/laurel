@@ -848,16 +848,15 @@ class GNN_PPO:
       deliveries / self._env._num_parcels
     )
 
-  @functools.partial(jax.vmap, in_axes=(None, 0, 0, 0, 0, 0, 0))
+  @functools.partial(jax.vmap, in_axes=(None, 0, 0, 0, 0, 0))
   @functools.partial(jax.jit, static_argnums=(0,))
-  def actor_loss(self, q_values, logps, action, logps_old, trucks, mask):
+  def actor_loss(self, q_values, logps, action, logps_old, trucks):
     # Compute advantage estimate.
     value = q_values @ jnp.exp(logps_old)
     advantage = q_values[action] - value
 
     # Compute PPO loss.
     logps = nn.log_softmax(jnp.where(trucks, logps, -jnp.inf))
-    # logps = nn.log_softmax(logps[trucks])
     ratio = jnp.exp(logps[action] - logps_old[action])
     loss = -jnp.minimum(
       ratio * advantage,
@@ -866,7 +865,7 @@ class GNN_PPO:
     kl = logps_old[action] - logps[action]
     return loss, kl
 
-  @functools.partial(jax.jit, static_argnums=(0, 8))
+  @functools.partial(jax.jit, static_argnums=(0, 7))
   def actor_update(
       self,
       params,
@@ -875,7 +874,6 @@ class GNN_PPO:
       observations,
       actions,
       logps_old,
-      mask,
       num_edges
   ):
     def risk(params):
@@ -884,7 +882,7 @@ class GNN_PPO:
       logps = self.policy(params, observations).reshape(-1, num_edges)
       trucks = (observations.edges[:, -2] == 1).reshape(-1, num_edges)
       losses, kls = self.actor_loss(
-        q_values, logps, actions, logps_old, trucks, mask
+        q_values, logps, actions, logps_old, trucks
       )
       return losses.mean(), kls.mean()
     (loss, kl), grad = jax.value_and_grad(risk, has_aux=True)(params)
@@ -968,10 +966,8 @@ class GNN_PPO:
       # Pad log-probabilities.
       num_steps = len(logps_het)
       logps = np.ones((num_steps, num_edges)) * (-np.inf)
-      mask = np.zeros((num_steps, num_edges), bool)
       for t in range(num_steps):
         logps[t, :len(logps_het[t])] = logps_het[t]
-        mask[t, :len(logps_het[t])] = True
 
       # Shuffle and trim data.
       idx = self._rng.permutation(len(observations))[
@@ -981,7 +977,6 @@ class GNN_PPO:
       actions = jnp.asarray(actions)[idx]
       returns = jnp.asarray(returns)[idx]
       logps = jnp.asarray(logps)[idx]
-      mask = jnp.asarray(mask)[idx]
       batches = [
         jraph.batch(
           observations[k * self._batch_size : (k + 1) * self._batch_size]
@@ -1000,7 +995,6 @@ class GNN_PPO:
             batch,
             actions[indices],
             logps[indices],
-            mask[indices],
             num_edges
           )
           if kl > self._kl_stop:
