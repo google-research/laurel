@@ -25,4 +25,4 @@ hyperparam_list:
   - param: num_rollouts
     values: [1, 3, 10]
   - param: seed
-    values: [0, 1, 2, 3, 4]
+    values: [0, 1, 2]
