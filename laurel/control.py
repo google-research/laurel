@@ -523,7 +523,7 @@ class LinearPPO:
       # Use truck and get next state.
       logits = special.log_softmax(self.policy(self._actor_params, features))
       action = self._rng.choice(len(trucks), p=np.exp(logits))
-      exploration += action == np.argmax(logits)
+      exploration += action != np.argmax(logits)
       truck = trucks[truck_ids[action]]
       state, delivery, _ = self._env.step(
         parcel[0], truck, state, prune=self._step_prune
@@ -1092,6 +1092,7 @@ class GraphNet(nn.Module):
 
 
 class MLP(nn.Module):
+  """Multilayer perceptron with silu activations."""
   layers: Sequence[int]
   residual: bool
 
@@ -1103,41 +1104,3 @@ class MLP(nn.Module):
       x = nn.silu(x)
     x = nn.Dense(self.layers[-1])(x)
     return x + y
-
-
-# if __name__ == '__main__':
-#   rng = np.random.default_rng(42)
-#   key = jax.random.PRNGKey(42)
-
-#   # Initialize training MDP.
-#   env = mdp.MiddleMileMDP(
-#       num_hubs=10,
-#       timesteps=50,
-#       num_trucks_per_step=10,
-#       max_truck_duration=5,
-#       num_parcels=200,
-#       mean_route_length=10,
-#       cut_capacities=0,
-#       unit_weights=True,
-#       unit_capacities=True,
-#   )
-
-#   from tqdm import tqdm
-#   controller = GNN_PPO(rng, key, env, 30, 1, 10, 10, 0.001, 0.1, 2, batch_size=256)
-#   losses_actor, losses_critic, exploration, performance = controller.train(
-#     pb_epoch=tqdm,
-#     pb_rollout=functools.partial(tqdm, leave=False),
-#     pb_actor=functools.partial(tqdm, leave=False),
-#     pb_critic=functools.partial(tqdm, leave=False),
-#   )
-
-#   breakpoint()
-
-#   state, _ = env.reset(rng)
-#   _, features, *_ = controller.get_features(state)
-#   controller.q(controller._critic_params, features)
-#   controller.policy(controller._actor_params, features)
-
-#   import matplotlib.pyplot as plt
-#   plt.plot(performance.mean(1))
-#   plt.show()  # it seems to learn?? increase the number of epochs further.

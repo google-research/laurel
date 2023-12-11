@@ -6,7 +6,7 @@ import collections
 from collections.abc import Mapping, Sequence
 import dataclasses
 import enum
-from typing import Optional
+from typing import Any, Optional
 
 import jax.numpy as jnp
 import jraph
@@ -993,6 +993,7 @@ def draw_network(
     node_feature: Optional[int] = None,
     time_axis: bool = True,
     index_labels: bool = False,
+    draw_kwargs: Optional[Mapping[str, Any]] = None,
 ) -> None:
   """Draw time-expanded transportation network `network` onto `ax`.
 
@@ -1070,6 +1071,7 @@ def draw_network(
   pos = nx.multipartite_layout(
       nx_graph, subset_key='time', align='horizontal', scale=-10
   )
+  draw_kwargs = {'font_color': 'k', 'node_size': 500} | dict(draw_kwargs or {})
   nx.draw(
       nx_graph,
       pos=pos if time_axis else None,
@@ -1077,7 +1079,6 @@ def draw_network(
           node: node if index_labels else int(network.nodes[node][0])
           for node in nx_graph.nodes
       },
-      font_color='k',
       node_color=[
           node_colors.get(node, 'lightgrey') for node in nx_graph.nodes
       ],
@@ -1085,7 +1086,7 @@ def draw_network(
           edge_colors.get(edge, 'lightgrey' if parcel_colors else 'grey')
           for edge in nx_graph.edges
       ],
-      node_size=500,
       ax=ax,
       edgecolors=[node_edgecolors.get(node, 'k') for node in nx_graph.nodes],
+      **draw_kwargs,
   )
